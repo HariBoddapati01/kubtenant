@@ -7,6 +7,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -161,6 +162,87 @@ func TestReconcileIsIdempotent(t *testing.T) {
 	}
 	if len(nsList.Items) != 2 {
 		t.Errorf("expected 2 namespaces after repeated reconciles, got %d", len(nsList.Items))
+	}
+}
+
+func TestReconcilePrunesRemovedNamespaces(t *testing.T) {
+	tenant := newTenant()
+	tenant.Spec.Namespaces = []string{"acme-dev", "acme-prod"}
+	r, cl := reconcileOnce(t, tenant)
+	ctx := context.Background()
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "acme"}}
+
+	// First reconcile provisions both namespaces and records them in status.
+	if _, err := r.Reconcile(ctx, req); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	for _, nsName := range []string{"acme-dev", "acme-prod"} {
+		var ns corev1.Namespace
+		if err := cl.Get(ctx, types.NamespacedName{Name: nsName}, &ns); err != nil {
+			t.Fatalf("namespace %s not created: %v", nsName, err)
+		}
+	}
+
+	// Drop acme-prod from the spec and reconcile again.
+	var current platformv1alpha1.Tenant
+	if err := cl.Get(ctx, types.NamespacedName{Name: "acme"}, &current); err != nil {
+		t.Fatalf("get tenant: %v", err)
+	}
+	current.Spec.Namespaces = []string{"acme-dev"}
+	if err := cl.Update(ctx, &current); err != nil {
+		t.Fatalf("update tenant spec: %v", err)
+	}
+	if _, err := r.Reconcile(ctx, req); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+
+	// The kept namespace still exists.
+	var kept corev1.Namespace
+	if err := cl.Get(ctx, types.NamespacedName{Name: "acme-dev"}, &kept); err != nil {
+		t.Fatalf("kept namespace acme-dev missing: %v", err)
+	}
+
+	// The dropped namespace was deleted.
+	var dropped corev1.Namespace
+	err := cl.Get(ctx, types.NamespacedName{Name: "acme-prod"}, &dropped)
+	if err == nil {
+		t.Fatalf("dropped namespace acme-prod still exists, want deleted")
+	}
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("unexpected error getting dropped namespace: %v", err)
+	}
+
+	// Status reflects only the remaining namespace.
+	var got platformv1alpha1.Tenant
+	if err := cl.Get(ctx, types.NamespacedName{Name: "acme"}, &got); err != nil {
+		t.Fatalf("get tenant: %v", err)
+	}
+	if len(got.Status.Namespaces) != 1 || got.Status.Namespaces[0] != "acme-dev" {
+		t.Errorf("status namespaces = %v, want [acme-dev]", got.Status.Namespaces)
+	}
+}
+
+func TestPruneSkipsUnownedNamespace(t *testing.T) {
+	// A namespace recorded in status but not labeled for this tenant must not be
+	// deleted by the prune, guarding against collateral damage.
+	tenant := newTenant()
+	tenant.Spec.Namespaces = []string{"acme-dev"}
+	tenant.Status.Namespaces = []string{"acme-dev", "foreign"}
+
+	foreign := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+		Name:   "foreign",
+		Labels: map[string]string{LabelTenant: "someone-else"},
+	}}
+
+	r, cl := reconcileOnce(t, tenant, foreign)
+	ctx := context.Background()
+	if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{Name: "acme"}}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	var got corev1.Namespace
+	if err := cl.Get(ctx, types.NamespacedName{Name: "foreign"}, &got); err != nil {
+		t.Fatalf("unowned namespace was wrongly deleted or errored: %v", err)
 	}
 }
 

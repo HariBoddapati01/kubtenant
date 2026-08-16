@@ -88,8 +88,56 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		provisioned = append(provisioned, ns)
 	}
 
+	// Prune namespaces that were previously provisioned for this tenant but are
+	// no longer desired. This must run before succeed overwrites status, since
+	// it compares the previous status.Namespaces against the desired set.
+	if err := r.pruneNamespaces(ctx, &tenant, provisioned); err != nil {
+		return r.fail(ctx, &tenant, fmt.Errorf("pruning stale namespaces: %w", err))
+	}
+
 	logger.Info("tenant reconciled", "tenant", tenant.Name, "namespaces", provisioned)
 	return r.succeed(ctx, &tenant, provisioned)
+}
+
+// pruneNamespaces deletes namespaces that this operator previously provisioned
+// for the tenant (recorded in status.Namespaces) but that are no longer present
+// in the desired set. To avoid deleting namespaces the operator does not own, it
+// verifies the tenant-ownership label before issuing the delete. Deletion of an
+// already-absent namespace is treated as success.
+func (r *TenantReconciler) pruneNamespaces(ctx context.Context, t *platformv1alpha1.Tenant, desired []string) error {
+	desiredSet := make(map[string]struct{}, len(desired))
+	for _, ns := range desired {
+		desiredSet[ns] = struct{}{}
+	}
+
+	logger := log.FromContext(ctx)
+	for _, prev := range t.Status.Namespaces {
+		if _, ok := desiredSet[prev]; ok {
+			continue
+		}
+
+		var ns corev1.Namespace
+		if err := r.Get(ctx, client.ObjectKey{Name: prev}, &ns); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return fmt.Errorf("namespace %q: %w", prev, err)
+		}
+
+		// Only delete namespaces this operator owns, identified by the tenant
+		// label. A namespace re-created out from under us, or one that happens to
+		// share the name, is left untouched.
+		if ns.Labels[LabelTenant] != t.Name {
+			logger.Info("skipping prune of unowned namespace", "tenant", t.Name, "namespace", prev)
+			continue
+		}
+
+		logger.Info("pruning stale namespace", "tenant", t.Name, "namespace", prev)
+		if err := client.IgnoreNotFound(r.Delete(ctx, &ns)); err != nil {
+			return fmt.Errorf("deleting namespace %q: %w", prev, err)
+		}
+	}
+	return nil
 }
 
 func (r *TenantReconciler) reconcileNamespace(ctx context.Context, t *platformv1alpha1.Tenant, name string) error {
