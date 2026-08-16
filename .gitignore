@@ -1,0 +1,12 @@
+# Binaries
+bin/
+manager
+
+# Test & coverage output
+cover.out
+*.test
+
+# Editor / OS
+.DS_Store
+.idea/
+*.swp
