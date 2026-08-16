@@ -1,0 +1,32 @@
+apiVersion: platform.hariboddapati.dev/v1alpha1
+kind: Tenant
+metadata:
+  name: acme
+spec:
+  displayName: "ACME Corp"
+  # Namespaces provisioned and owned by this tenant. Deleting the Tenant
+  # garbage-collects them via owner references.
+  namespaces:
+    - acme-dev
+    - acme-staging
+    - acme-prod
+  # RBAC subjects granted the ownerRole (namespace-scoped) in every namespace.
+  owners:
+    - kind: Group
+      name: acme-platform-admins
+    - kind: User
+      name: jane@acme.example
+  ownerRole: admin
+  # Per-namespace aggregate resource ceiling.
+  resourceQuota:
+    cpu: "16"
+    memory: 32Gi
+    pods: "80"
+  # Default container requests/limits so unbounded pods can't starve the node.
+  limitRange:
+    defaultCPU: 500m
+    defaultMemory: 512Mi
+    defaultRequestCPU: 100m
+    defaultRequestMemory: 128Mi
+  # Install default-deny ingress + allow-same-tenant NetworkPolicies.
+  networkIsolation: true

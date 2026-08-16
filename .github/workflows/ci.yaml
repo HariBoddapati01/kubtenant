@@ -1,0 +1,55 @@
+name: ci
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - name: Verify generated code is up to date
+        run: |
+          go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.21.0 object:headerFile=/dev/null paths=./api/...
+          go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.21.0 crd rbac:roleName=kubtenant-manager-role paths=./... \
+            output:crd:artifacts:config=config/crd/bases output:rbac:artifacts:config=config/rbac
+          git diff --exit-code || (echo "::error::generated code is stale; run 'make generate manifests'" && exit 1)
+      - name: go vet
+        run: go vet ./...
+      - name: unit tests
+        run: go test ./... -race -coverprofile=cover.out
+      - name: build
+        run: go build ./...
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+  image:
+    name: build image
+    runs-on: ubuntu-latest
+    needs: [ test, lint ]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build container image
+        run: docker build -t kubtenant:ci .

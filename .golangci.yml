@@ -1,0 +1,22 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - unconvert
+    - revive
+  exclusions:
+    rules:
+      - path: zz_generated\.deepcopy\.go
+        linters:
+          - all
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
