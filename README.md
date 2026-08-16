@@ -129,6 +129,7 @@ kubectl apply -f config/samples/tenant.yaml
 ## Roadmap
 
 - [x] Namespace pruning — reclaim namespaces dropped from `spec.namespaces`
+- [x] Prometheus metrics for tenant/namespace counts and reconcile outcomes
 - [ ] `envtest`-based integration suite in CI
 - [ ] Optional `LimitRange` for PVCs and per-pod maxima
 - [ ] Egress `NetworkPolicy` templates

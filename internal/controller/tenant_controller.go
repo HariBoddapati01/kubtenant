@@ -266,6 +266,8 @@ func (r *TenantReconciler) succeed(ctx context.Context, t *platformv1alpha1.Tena
 		Message:            fmt.Sprintf("%d namespace(s) reconciled", len(namespaces)),
 		ObservedGeneration: t.Generation,
 	})
+	reconcileTotal.WithLabelValues(resultSuccess).Inc()
+	tenantNamespaces.WithLabelValues(t.Name).Set(float64(len(namespaces)))
 	return ctrl.Result{}, r.Status().Update(ctx, t)
 }
 
@@ -279,6 +281,7 @@ func (r *TenantReconciler) fail(ctx context.Context, t *platformv1alpha1.Tenant,
 		Message:            cause.Error(),
 		ObservedGeneration: t.Generation,
 	})
+	reconcileTotal.WithLabelValues(resultError).Inc()
 	// Best-effort status update; return the original cause so the item requeues.
 	if err := r.Status().Update(ctx, t); err != nil && !apierrors.IsConflict(err) {
 		log.FromContext(ctx).Error(err, "failed to update status after error")

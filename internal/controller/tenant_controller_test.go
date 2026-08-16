@@ -17,6 +17,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	platformv1alpha1 "github.com/HariBoddapati01/kubtenant/api/v1alpha1"
 )
 
@@ -243,6 +245,26 @@ func TestPruneSkipsUnownedNamespace(t *testing.T) {
 	var got corev1.Namespace
 	if err := cl.Get(ctx, types.NamespacedName{Name: "foreign"}, &got); err != nil {
 		t.Fatalf("unowned namespace was wrongly deleted or errored: %v", err)
+	}
+}
+
+func TestReconcileRecordsMetrics(t *testing.T) {
+	tenant := newTenant()
+	tenant.Name = "metrics-tenant"
+	tenant.Spec.Namespaces = []string{"mt-dev", "mt-prod", "mt-staging"}
+	r, _ := reconcileOnce(t, tenant)
+	ctx := context.Background()
+
+	before := testutil.ToFloat64(reconcileTotal.WithLabelValues(resultSuccess))
+	if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{Name: "metrics-tenant"}}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if got := testutil.ToFloat64(reconcileTotal.WithLabelValues(resultSuccess)); got != before+1 {
+		t.Errorf("success counter = %v, want %v", got, before+1)
+	}
+	if got := testutil.ToFloat64(tenantNamespaces.WithLabelValues("metrics-tenant")); got != 3 {
+		t.Errorf("tenant namespaces gauge = %v, want 3", got)
 	}
 }
 
