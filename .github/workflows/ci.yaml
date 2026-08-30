@@ -41,9 +41,11 @@ jobs:
         with:
           go-version: '1.26'
           cache: true
-      - uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
+      # Run golangci-lint (v2) via `go run` so it is compiled with the runner's
+      # own Go toolchain. A prebuilt action binary can lag the module's Go
+      # version and refuse to lint it; building from source avoids that skew.
+      - name: golangci-lint
+        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...
 
   image:
     name: build image
