@@ -73,4 +73,6 @@ echo "prune OK (acme-staging: $phase)"
 
 step "done"
 echo "Tenant 'acme' is live on kind cluster '$CLUSTER'."
-[[ "$KEEP" == "true" ]] && echo "Explore it, then clean up with: kind delete cluster --name $CLUSTER"
+if [[ "$KEEP" == "true" ]]; then
+  echo "Explore it, then clean up with: kind delete cluster --name $CLUSTER"
+fi
