@@ -112,13 +112,23 @@ spec:
     cpu: "16"
     memory: 32Gi
     pods: "80"
-  limitRange:                   # default container requests/limits
+  limitRange:                   # default container requests/limits + maxima
     defaultCPU: 500m
     defaultMemory: 512Mi
     defaultRequestCPU: 100m
     defaultRequestMemory: 128Mi
-  networkIsolation: true        # default-deny ingress + allow-same-tenant
+    maxCPU: "4"                 # per-container ceiling
+    maxMemory: 8Gi
+    minPVCStorage: 1Gi          # PVC size bounds
+    maxPVCStorage: 100Gi
+  networkIsolation: true        # default-deny ingress+egress, allow same-tenant + DNS
+  podSecurity: restricted       # PSS enforce label on every tenant namespace
 ```
+
+Specs are validated at admission by CEL rules on the CRD — bad quantities,
+system-namespace collisions (`default`, `kube-*`), non-DNS-label names, and
+owner roles outside `admin`/`edit`/`view` are rejected by the API server
+before the controller ever sees them.
 
 Full field reference: `kubectl explain tenant.spec`.
 
@@ -152,11 +162,13 @@ KEEP=false make demo      # same, but tears the kind cluster down after (CI mode
 
 - [x] Namespace pruning — reclaim namespaces dropped from `spec.namespaces`
 - [x] Prometheus metrics for tenant/namespace counts and reconcile outcomes
-- [ ] `envtest`-based integration suite in CI
-- [ ] Optional `LimitRange` for PVCs and per-pod maxima
-- [ ] Egress `NetworkPolicy` templates
-- [ ] Namespace `PriorityClass` and `PodSecurity` admission labels
-- [ ] Conversion webhook + `v1beta1` graduation
+- [x] `envtest`-based integration suite in CI (`make test-integration`)
+- [x] `LimitRange` PVC size bounds and per-container maxima
+- [x] Egress `NetworkPolicy` (default-deny + allow-same-tenant + allow-DNS)
+- [x] `PodSecurity` admission labels (`spec.podSecurity`)
+- [x] CEL validation rules on the CRD (bad specs rejected at admission)
+- [ ] Namespace `PriorityClass` defaulting (needs its own design — not a native namespace concept)
+- [ ] Conversion webhook + `v1beta1` graduation (deferred until the API has survived real users; CEL covers validation without webhook infrastructure)
 
 ## License
 

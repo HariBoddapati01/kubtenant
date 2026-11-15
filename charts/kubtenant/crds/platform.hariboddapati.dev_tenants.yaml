@@ -91,28 +91,72 @@ spec:
                     description: DefaultRequestMemory is the default memory request
                       applied to containers (e.g. "128Mi").
                     type: string
+                  maxCPU:
+                    description: |-
+                      MaxCPU, when set, is the maximum CPU limit any single container may
+                      request (e.g. "4").
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be a valid resource quantity
+                      rule: isQuantity(self)
+                  maxMemory:
+                    description: |-
+                      MaxMemory, when set, is the maximum memory limit any single container may
+                      request (e.g. "8Gi").
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be a valid resource quantity
+                      rule: isQuantity(self)
+                  maxPVCStorage:
+                    description: |-
+                      MaxPVCStorage, when set, caps the storage request of any single
+                      PersistentVolumeClaim (e.g. "100Gi").
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be a valid resource quantity
+                      rule: isQuantity(self)
+                  minPVCStorage:
+                    description: |-
+                      MinPVCStorage, when set, is the minimum storage request of any single
+                      PersistentVolumeClaim (e.g. "1Gi").
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be a valid resource quantity
+                      rule: isQuantity(self)
                 type: object
               namespaces:
                 description: |-
                   Namespaces is the list of namespaces to provision for this tenant. Every
                   namespace is labeled with the tenant name and owned by the Tenant object,
-                  so deleting the Tenant garbage-collects them.
+                  so deleting the Tenant garbage-collects them. Names must be DNS labels
+                  and may not collide with system namespaces.
                 items:
+                  maxLength: 63
+                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                   type: string
                 minItems: 1
                 type: array
+                x-kubernetes-validations:
+                - message: namespaces may not be 'default' or start with 'kube-'
+                  rule: self.all(ns, !ns.startsWith('kube-') && ns != 'default')
               networkIsolation:
                 default: true
                 description: |-
-                  NetworkIsolation, when true, installs a default-deny ingress NetworkPolicy
-                  plus an allow-same-tenant rule in each namespace, isolating tenant traffic.
+                  NetworkIsolation, when true, installs default-deny ingress AND egress
+                  NetworkPolicies in each namespace, plus allow-same-tenant rules in both
+                  directions and an egress allowance for DNS to kube-system.
                 type: boolean
               ownerRole:
                 default: admin
                 description: |-
                   OwnerRole is the ClusterRole that owners are bound to inside each tenant
-                  namespace. Defaults to the built-in "admin" ClusterRole, which is scoped
-                  to the namespace by the RoleBinding.
+                  namespace. Restricted to the built-in aggregate roles, which are the only
+                  ones the operator holds `bind` on — anything else would fail Kubernetes'
+                  RBAC escalation check at reconcile time.
+                enum:
+                - admin
+                - edit
+                - view
                 type: string
               owners:
                 description: |-
@@ -136,6 +180,16 @@ spec:
                   - name
                   type: object
                 type: array
+              podSecurity:
+                description: |-
+                  PodSecurity, when set, applies the given Pod Security Standards profile
+                  to every tenant namespace via the pod-security.kubernetes.io/enforce
+                  label. Unset means no PSS label is managed.
+                enum:
+                - privileged
+                - baseline
+                - restricted
+                type: string
               resourceQuota:
                 description: |-
                   ResourceQuota, when set, is applied to every tenant namespace to cap
@@ -145,14 +199,23 @@ spec:
                     description: CPU is the aggregate limits.cpu allowed across the
                       namespace (e.g. "8").
                     type: string
+                    x-kubernetes-validations:
+                    - message: must be a valid resource quantity
+                      rule: isQuantity(self)
                   memory:
                     description: Memory is the aggregate limits.memory allowed across
                       the namespace (e.g. "16Gi").
                     type: string
+                    x-kubernetes-validations:
+                    - message: must be a valid resource quantity
+                      rule: isQuantity(self)
                   pods:
                     description: Pods is the maximum number of pods allowed in the
                       namespace.
                     type: string
+                    x-kubernetes-validations:
+                    - message: must be a valid resource quantity
+                      rule: isQuantity(self)
                 type: object
             required:
             - namespaces

@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -146,10 +147,20 @@ func (r *TenantReconciler) pruneNamespaces(ctx context.Context, t *platformv1alp
 	return nil
 }
 
+// labelPSSEnforce is the Pod Security Standards enforcement label managed on
+// tenant namespaces when spec.podSecurity is set.
+const labelPSSEnforce = "pod-security.kubernetes.io/enforce"
+
 func (r *TenantReconciler) reconcileNamespace(ctx context.Context, t *platformv1alpha1.Tenant, name string) error {
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, ns, func() error {
 		applyLabels(&ns.ObjectMeta, t)
+		if t.Spec.PodSecurity != "" {
+			ns.Labels[labelPSSEnforce] = t.Spec.PodSecurity
+		} else {
+			// Clearing spec.podSecurity releases the label back to the user.
+			delete(ns.Labels, labelPSSEnforce)
+		}
 		if t.Spec.DisplayName != "" {
 			if ns.Annotations == nil {
 				ns.Annotations = map[string]string{}
@@ -185,49 +196,123 @@ func (r *TenantReconciler) reconcileLimitRange(ctx context.Context, t *platformv
 	if err != nil {
 		return fmt.Errorf("default requests: %w", err)
 	}
+	containerMax, err := parseResourceList(spec.MaxCPU, spec.MaxMemory)
+	if err != nil {
+		return fmt.Errorf("container maxima: %w", err)
+	}
+	pvcMin, pvcMax, err := pvcStorageBounds(spec)
+	if err != nil {
+		return err
+	}
+
+	items := []corev1.LimitRangeItem{{
+		Type:           corev1.LimitTypeContainer,
+		Default:        def,
+		DefaultRequest: req,
+		Max:            containerMax,
+	}}
+	if len(pvcMin) > 0 || len(pvcMax) > 0 {
+		items = append(items, corev1.LimitRangeItem{
+			Type: corev1.LimitTypePersistentVolumeClaim,
+			Min:  pvcMin,
+			Max:  pvcMax,
+		})
+	}
+
 	lr := &corev1.LimitRange{ObjectMeta: metav1.ObjectMeta{Name: managerName + "-limits", Namespace: ns}}
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, lr, func() error {
 		applyLabels(&lr.ObjectMeta, t)
-		lr.Spec.Limits = []corev1.LimitRangeItem{{
-			Type:           corev1.LimitTypeContainer,
-			Default:        def,
-			DefaultRequest: req,
-		}}
+		lr.Spec.Limits = items
 		return controllerutil.SetControllerReference(t, lr, r.Scheme)
 	})
 	return err
 }
 
+// pvcStorageBounds translates the Min/MaxPVCStorage spec fields into
+// LimitRange resource lists; empty fields yield empty lists.
+func pvcStorageBounds(spec *platformv1alpha1.LimitRangeSpec) (min, max corev1.ResourceList, err error) {
+	min, max = corev1.ResourceList{}, corev1.ResourceList{}
+	if spec.MinPVCStorage != "" {
+		qty, err := resource.ParseQuantity(spec.MinPVCStorage)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid minPVCStorage %q: %w", spec.MinPVCStorage, err)
+		}
+		min[corev1.ResourceStorage] = qty
+	}
+	if spec.MaxPVCStorage != "" {
+		qty, err := resource.ParseQuantity(spec.MaxPVCStorage)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid maxPVCStorage %q: %w", spec.MaxPVCStorage, err)
+		}
+		max[corev1.ResourceStorage] = qty
+	}
+	return min, max, nil
+}
+
 func (r *TenantReconciler) reconcileNetworkPolicies(ctx context.Context, t *platformv1alpha1.Tenant, ns string) error {
-	// 1. Default-deny all ingress.
+	sameTenant := []networkingv1.NetworkPolicyPeer{{
+		NamespaceSelector: &metav1.LabelSelector{
+			MatchLabels: map[string]string{LabelTenant: t.Name},
+		},
+	}}
+
+	// 1. Default-deny all ingress AND egress. The name keeps its historical
+	// "-ingress" suffix for upgrade continuity; CreateOrUpdate widens the
+	// policyTypes on existing objects.
 	deny := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: managerName + "-default-deny-ingress", Namespace: ns}}
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, deny, func() error {
 		applyLabels(&deny.ObjectMeta, t)
 		deny.Spec = networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{},
-			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress},
 		}
 		return controllerutil.SetControllerReference(t, deny, r.Scheme)
 	}); err != nil {
 		return err
 	}
 
-	// 2. Allow ingress from any namespace belonging to the same tenant.
+	// 2. Allow traffic to/from any namespace belonging to the same tenant.
 	allow := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: managerName + "-allow-same-tenant", Namespace: ns}}
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, allow, func() error {
+	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, allow, func() error {
 		applyLabels(&allow.ObjectMeta, t)
 		allow.Spec = networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{},
-			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress},
 			Ingress: []networkingv1.NetworkPolicyIngressRule{{
-				From: []networkingv1.NetworkPolicyPeer{{
-					NamespaceSelector: &metav1.LabelSelector{
-						MatchLabels: map[string]string{LabelTenant: t.Name},
-					},
-				}},
+				From: sameTenant,
+			}},
+			Egress: []networkingv1.NetworkPolicyEgressRule{{
+				To: sameTenant,
 			}},
 		}
 		return controllerutil.SetControllerReference(t, allow, r.Scheme)
+	}); err != nil {
+		return err
+	}
+
+	// 3. With egress now denied by default, DNS must be explicitly allowed or
+	// every in-namespace lookup breaks.
+	dnsPort := intstr.FromInt32(53)
+	udp, tcp := corev1.ProtocolUDP, corev1.ProtocolTCP
+	dns := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: managerName + "-allow-dns", Namespace: ns}}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, dns, func() error {
+		applyLabels(&dns.ObjectMeta, t)
+		dns.Spec = networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
+			Egress: []networkingv1.NetworkPolicyEgressRule{{
+				To: []networkingv1.NetworkPolicyPeer{{
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"kubernetes.io/metadata.name": "kube-system"},
+					},
+				}},
+				Ports: []networkingv1.NetworkPolicyPort{
+					{Protocol: &udp, Port: &dnsPort},
+					{Protocol: &tcp, Port: &dnsPort},
+				},
+			}},
+		}
+		return controllerutil.SetControllerReference(t, dns, r.Scheme)
 	})
 	return err
 }

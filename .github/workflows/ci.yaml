@@ -47,6 +47,18 @@ jobs:
       - name: golangci-lint
         run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...
 
+  integration:
+    name: envtest integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - name: Run integration tests against a real kube-apiserver
+        run: make test-integration
+
   helm:
     name: helm lint + chart CRD drift
     runs-on: ubuntu-latest
