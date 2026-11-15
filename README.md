@@ -57,14 +57,36 @@ See [`docs/architecture.md`](docs/architecture.md) for the full design, failure 
 
 ## Quickstart
 
-```bash
-# 1. Install the CRD and deploy the controller
-make deploy IMG=ghcr.io/hariboddapati01/kubtenant:latest
+**Zero-to-demo in one command** (needs docker, kind, helm, kubectl):
 
-# 2. Create a tenant
+```bash
+make demo
+```
+
+That spins up a kind cluster, builds and installs the operator via the Helm
+chart, provisions the sample `acme` tenant, then demonstrates self-healing
+(deletes a managed quota and watches it come back) and pruning (drops a
+namespace from the spec and watches it get garbage-collected).
+
+**Install on a real cluster** — pick one:
+
+```bash
+# Helm (OCI chart)
+helm install kubtenant oci://ghcr.io/hariboddapati01/charts/kubtenant \
+  --namespace kubtenant-system --create-namespace
+
+# Plain manifests (pinned image, published with each release)
+kubectl apply -f https://github.com/HariBoddapati01/kubtenant/releases/latest/download/install.yaml
+
+# From a checkout
+make deploy IMG=ghcr.io/hariboddapati01/kubtenant:latest
+```
+
+Then create a tenant and watch it provision:
+
+```bash
 kubectl apply -f config/samples/tenant.yaml
 
-# 3. Watch it provision
 kubectl get tenant acme -w
 # NAME   PHASE    NAMESPACES                              AGE
 # acme   Active   [acme-dev acme-staging acme-prod]       6s
@@ -114,9 +136,9 @@ make docker-build  # distroless, non-root, static binary
 Try it end-to-end on a throwaway cluster:
 
 ```bash
-kind create cluster
-make install deploy
-kubectl apply -f config/samples/tenant.yaml
+make demo                 # kind + helm + sample tenant + self-heal/GC walkthrough
+make helm-lint            # chart lint + chart-CRD drift check
+KEEP=false make demo      # same, but tears the kind cluster down after (CI mode)
 ```
 
 ## Design choices worth calling out

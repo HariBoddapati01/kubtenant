@@ -47,6 +47,12 @@ type TenantReconciler struct {
 // +kubebuilder:rbac:groups="",resources=resourcequotas;limitranges,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
+//
+// The controller creates RoleBindings that grant admin/edit/view to tenant
+// owners. Kubernetes' RBAC escalation check requires the grantor to either
+// hold those permissions itself or hold `bind` on the referenced roles; the
+// narrow `bind` verb (scoped by resourceNames) is the least-privilege choice.
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=bind,resourceNames=admin;edit;view
 
 // Reconcile drives the observed state of a Tenant toward its spec. It is
 // idempotent: every managed object is created-or-updated, so repeated calls

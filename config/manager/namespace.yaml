@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kubtenant-system
+  labels:
+    app.kubernetes.io/name: kubtenant
+    # The operator manages tenant namespaces; its own namespace must never be
+    # mistaken for one, so it carries no tenant label.
+    pod-security.kubernetes.io/enforce: restricted

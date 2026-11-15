@@ -1,0 +1,72 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # create the GitHub release + attach install.yaml
+  packages: write # push image + chart to GHCR
+
+env:
+  IMAGE: ghcr.io/hariboddapati01/kubtenant
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive version from tag
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.ref_name }}
+            ${{ env.IMAGE }}:latest
+
+      - name: Package and push Helm chart (OCI)
+        run: |
+          helm package charts/kubtenant \
+            --version "${{ steps.ver.outputs.version }}" \
+            --app-version "${{ steps.ver.outputs.version }}"
+          helm push "kubtenant-${{ steps.ver.outputs.version }}.tgz" \
+            oci://ghcr.io/hariboddapati01/charts
+
+      - name: Assemble install.yaml
+        run: |
+          {
+            cat config/crd/bases/platform.hariboddapati.dev_tenants.yaml
+            echo "---"
+            cat config/manager/namespace.yaml
+            echo "---"
+            cat config/rbac/service_account.yaml
+            echo "---"
+            cat config/rbac/role.yaml
+            echo "---"
+            cat config/rbac/role_binding.yaml
+            echo "---"
+            sed "s|image: ${IMAGE}:latest|image: ${IMAGE}:${GITHUB_REF_NAME}|" config/manager/manager.yaml
+          } > install.yaml
+          grep -q "image: ${IMAGE}:${GITHUB_REF_NAME}" install.yaml # pin must have applied
+
+      - name: Create GitHub release with install.yaml
+        uses: softprops/action-gh-release@v2
+        with:
+          files: install.yaml
+          generate_release_notes: true
