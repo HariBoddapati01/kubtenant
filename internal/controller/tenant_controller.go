@@ -230,23 +230,23 @@ func (r *TenantReconciler) reconcileLimitRange(ctx context.Context, t *platformv
 
 // pvcStorageBounds translates the Min/MaxPVCStorage spec fields into
 // LimitRange resource lists; empty fields yield empty lists.
-func pvcStorageBounds(spec *platformv1alpha1.LimitRangeSpec) (min, max corev1.ResourceList, err error) {
-	min, max = corev1.ResourceList{}, corev1.ResourceList{}
+func pvcStorageBounds(spec *platformv1alpha1.LimitRangeSpec) (lower, upper corev1.ResourceList, err error) {
+	lower, upper = corev1.ResourceList{}, corev1.ResourceList{}
 	if spec.MinPVCStorage != "" {
 		qty, err := resource.ParseQuantity(spec.MinPVCStorage)
 		if err != nil {
 			return nil, nil, fmt.Errorf("invalid minPVCStorage %q: %w", spec.MinPVCStorage, err)
 		}
-		min[corev1.ResourceStorage] = qty
+		lower[corev1.ResourceStorage] = qty
 	}
 	if spec.MaxPVCStorage != "" {
 		qty, err := resource.ParseQuantity(spec.MaxPVCStorage)
 		if err != nil {
 			return nil, nil, fmt.Errorf("invalid maxPVCStorage %q: %w", spec.MaxPVCStorage, err)
 		}
-		max[corev1.ResourceStorage] = qty
+		upper[corev1.ResourceStorage] = qty
 	}
-	return min, max, nil
+	return lower, upper, nil
 }
 
 func (r *TenantReconciler) reconcileNetworkPolicies(ctx context.Context, t *platformv1alpha1.Tenant, ns string) error {
