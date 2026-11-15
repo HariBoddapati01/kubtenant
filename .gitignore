@@ -1,6 +1,6 @@
 # Binaries
 bin/
-manager
+/manager
 
 # Test & coverage output
 cover.out

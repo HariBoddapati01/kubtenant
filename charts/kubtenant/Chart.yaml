@@ -1,0 +1,19 @@
+apiVersion: v2
+name: kubtenant
+description: >-
+  Self-service, guardrailed multi-tenancy for Kubernetes — a single Tenant CRD
+  provisions namespaces with quotas, limits, network isolation and owner RBAC.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/HariBoddapati01/kubtenant
+sources:
+  - https://github.com/HariBoddapati01/kubtenant
+maintainers:
+  - name: Hari Boddapati
+    url: https://github.com/HariBoddapati01
+keywords:
+  - multi-tenancy
+  - operator
+  - namespaces
+  - rbac

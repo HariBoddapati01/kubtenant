@@ -58,6 +58,16 @@ rules:
   - update
 - apiGroups:
   - rbac.authorization.k8s.io
+  resourceNames:
+  - admin
+  - edit
+  - view
+  resources:
+  - clusterroles
+  verbs:
+  - bind
+- apiGroups:
+  - rbac.authorization.k8s.io
   resources:
   - rolebindings
   verbs:

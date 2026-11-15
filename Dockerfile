@@ -1,5 +1,8 @@
-# Build the manager binary
-FROM golang:1.26 AS builder
+# Build the manager binary.
+# --platform=$BUILDPLATFORM: the builder always runs natively on the build
+# host and cross-compiles via GOARCH, so multi-arch builds don't run the Go
+# toolchain under QEMU emulation (slow enough to time out release jobs).
+FROM --platform=$BUILDPLATFORM golang:1.26 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 

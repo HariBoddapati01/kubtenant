@@ -39,6 +39,17 @@ test: generate fmt vet ## Run unit tests.
 lint: ## Run golangci-lint.
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...
 
+.PHONY: helm-lint
+helm-lint: ## Lint the Helm chart and check the chart CRD matches config/crd.
+	helm lint charts/kubtenant
+	diff -u config/crd/bases/platform.hariboddapati.dev_tenants.yaml \
+		charts/kubtenant/crds/platform.hariboddapati.dev_tenants.yaml \
+		|| (echo "chart CRD is out of date; run: cp config/crd/bases/*.yaml charts/kubtenant/crds/" && exit 1)
+
+.PHONY: demo
+demo: ## Full local demo on kind: build, helm install, self-heal + GC walkthrough.
+	hack/demo.sh
+
 ##@ Build
 
 .PHONY: build
