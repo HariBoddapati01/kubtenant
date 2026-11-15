@@ -62,13 +62,23 @@ jobs:
             || (echo "::error::chart CRD is stale; run 'cp config/crd/bases/*.yaml charts/kubtenant/crds/'" && exit 1)
 
   image:
-    name: build image
+    name: build image (multi-arch)
     runs-on: ubuntu-latest
     needs: [ test, lint ]
     steps:
       - uses: actions/checkout@v4
-      - name: Build container image
-        run: docker build -t kubtenant:ci .
+      - uses: docker/setup-buildx-action@v3
+      # Both release platforms, no push: proves the cross-compile path on
+      # every PR so a Dockerfile change can't break the release job later.
+      # No QEMU needed: the builder stage runs on $BUILDPLATFORM and the
+      # runtime stage is a distroless COPY with no RUN steps.
+      - name: Build container image for linux/amd64,linux/arm64
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          tags: kubtenant:ci
 
   e2e:
     name: kind e2e (make demo)
