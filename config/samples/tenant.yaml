@@ -1,4 +1,4 @@
-apiVersion: platform.hariboddapati.dev/v1alpha1
+apiVersion: platform.hariboddapati.dev/v1beta1
 kind: Tenant
 metadata:
   name: acme
@@ -37,3 +37,9 @@ spec:
   networkIsolation: true
   # Enforce the "restricted" Pod Security Standard in every tenant namespace.
   podSecurity: restricted
+  # Provision a tenant PriorityClass (kubtenant-acme) and forbid pods from
+  # using any other explicit priority class in tenant namespaces.
+  priorityClass:
+    value: 1000
+    description: "ACME workloads"
+    restrict: true

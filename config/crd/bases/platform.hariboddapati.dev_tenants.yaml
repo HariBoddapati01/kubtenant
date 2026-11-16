@@ -26,6 +26,9 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
+    deprecated: true
+    deprecationWarning: platform.hariboddapati.dev/v1alpha1 Tenant is deprecated;
+      use v1beta1 (identical schema)
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -190,6 +193,343 @@ spec:
                 - baseline
                 - restricted
                 type: string
+              priorityClass:
+                description: |-
+                  PriorityClass, when set, provisions a cluster-scoped PriorityClass named
+                  "kubtenant-<tenant>" for this tenant's workloads, and can optionally
+                  restrict tenant namespaces to it.
+                properties:
+                  description:
+                    description: Description is surfaced on the created PriorityClass.
+                    type: string
+                  restrict:
+                    description: |-
+                      Restrict, when true, installs a scoped ResourceQuota in every tenant
+                      namespace that forbids pods from using any OTHER explicit PriorityClass.
+                      Pods with no priorityClassName are unaffected.
+                    type: boolean
+                  value:
+                    description: |-
+                      Value is the scheduling priority assigned to the tenant's class. Kept
+                      below 1e9 so tenants can never outrank system-critical classes.
+                    format: int32
+                    maximum: 999999999
+                    minimum: 0
+                    type: integer
+                required:
+                - value
+                type: object
+              resourceQuota:
+                description: |-
+                  ResourceQuota, when set, is applied to every tenant namespace to cap
+                  aggregate resource consumption.
+                properties:
+                  cpu:
+                    description: CPU is the aggregate limits.cpu allowed across the
+                      namespace (e.g. "8").
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be a valid resource quantity
+                      rule: isQuantity(self)
+                  memory:
+                    description: Memory is the aggregate limits.memory allowed across
+                      the namespace (e.g. "16Gi").
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be a valid resource quantity
+                      rule: isQuantity(self)
+                  pods:
+                    description: Pods is the maximum number of pods allowed in the
+                      namespace.
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be a valid resource quantity
+                      rule: isQuantity(self)
+                type: object
+            required:
+            - namespaces
+            type: object
+          status:
+            description: TenantStatus defines the observed state of a Tenant.
+            properties:
+              conditions:
+                description: Conditions represent the latest available observations
+                  of the tenant's state.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              namespaces:
+                description: Namespaces lists the namespaces currently reconciled
+                  for this tenant.
+                items:
+                  type: string
+                type: array
+              observedGeneration:
+                description: ObservedGeneration is the .metadata.generation the status
+                  reflects.
+                format: int64
+                type: integer
+              phase:
+                description: Phase is a coarse summary of the tenant's state.
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: false
+    subresources:
+      status: {}
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.namespaces
+      name: Namespaces
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          Tenant is the Schema for the tenants API. It is cluster-scoped because it
+          provisions and owns namespaces.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              TenantSpec defines the desired state of a Tenant.
+
+              A Tenant is a self-service unit of soft multi-tenancy. The operator reconciles
+              a Tenant into a set of guardrailed namespaces: each namespace gets a
+              ResourceQuota, a LimitRange with sane container defaults, a default-deny
+              NetworkPolicy (plus an allow-same-tenant rule), and RBAC RoleBindings that
+              grant the tenant owners the configured role.
+            properties:
+              displayName:
+                description: |-
+                  DisplayName is a human-friendly name for the tenant, surfaced in labels
+                  and annotations on managed resources.
+                maxLength: 253
+                type: string
+              limitRange:
+                description: |-
+                  LimitRange, when set, installs default container requests/limits in every
+                  tenant namespace so unbounded pods can't starve the cluster.
+                properties:
+                  defaultCPU:
+                    default: 500m
+                    description: DefaultCPU is the default CPU limit applied to containers
+                      (e.g. "500m").
+                    type: string
+                  defaultMemory:
+                    default: 512Mi
+                    description: DefaultMemory is the default memory limit applied
+                      to containers (e.g. "512Mi").
+                    type: string
+                  defaultRequestCPU:
+                    default: 100m
+                    description: DefaultRequestCPU is the default CPU request applied
+                      to containers (e.g. "100m").
+                    type: string
+                  defaultRequestMemory:
+                    default: 128Mi
+                    description: DefaultRequestMemory is the default memory request
+                      applied to containers (e.g. "128Mi").
+                    type: string
+                  maxCPU:
+                    description: |-
+                      MaxCPU, when set, is the maximum CPU limit any single container may
+                      request (e.g. "4").
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be a valid resource quantity
+                      rule: isQuantity(self)
+                  maxMemory:
+                    description: |-
+                      MaxMemory, when set, is the maximum memory limit any single container may
+                      request (e.g. "8Gi").
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be a valid resource quantity
+                      rule: isQuantity(self)
+                  maxPVCStorage:
+                    description: |-
+                      MaxPVCStorage, when set, caps the storage request of any single
+                      PersistentVolumeClaim (e.g. "100Gi").
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be a valid resource quantity
+                      rule: isQuantity(self)
+                  minPVCStorage:
+                    description: |-
+                      MinPVCStorage, when set, is the minimum storage request of any single
+                      PersistentVolumeClaim (e.g. "1Gi").
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be a valid resource quantity
+                      rule: isQuantity(self)
+                type: object
+              namespaces:
+                description: |-
+                  Namespaces is the list of namespaces to provision for this tenant. Every
+                  namespace is labeled with the tenant name and owned by the Tenant object,
+                  so deleting the Tenant garbage-collects them. Names must be DNS labels
+                  and may not collide with system namespaces.
+                items:
+                  maxLength: 63
+                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                  type: string
+                minItems: 1
+                type: array
+                x-kubernetes-validations:
+                - message: namespaces may not be 'default' or start with 'kube-'
+                  rule: self.all(ns, !ns.startsWith('kube-') && ns != 'default')
+              networkIsolation:
+                default: true
+                description: |-
+                  NetworkIsolation, when true, installs default-deny ingress AND egress
+                  NetworkPolicies in each namespace, plus allow-same-tenant rules in both
+                  directions and an egress allowance for DNS to kube-system.
+                type: boolean
+              ownerRole:
+                default: admin
+                description: |-
+                  OwnerRole is the ClusterRole that owners are bound to inside each tenant
+                  namespace. Restricted to the built-in aggregate roles, which are the only
+                  ones the operator holds `bind` on — anything else would fail Kubernetes'
+                  RBAC escalation check at reconcile time.
+                enum:
+                - admin
+                - edit
+                - view
+                type: string
+              owners:
+                description: |-
+                  Owners are the RBAC subjects (users and/or groups) that receive the
+                  OwnerRole within every tenant namespace via a RoleBinding.
+                items:
+                  description: Subject identifies an RBAC subject to bind within tenant
+                    namespaces.
+                  properties:
+                    kind:
+                      description: 'Kind is the subject kind: "User" or "Group".'
+                      enum:
+                      - User
+                      - Group
+                      type: string
+                    name:
+                      description: Name is the subject name.
+                      type: string
+                  required:
+                  - kind
+                  - name
+                  type: object
+                type: array
+              podSecurity:
+                description: |-
+                  PodSecurity, when set, applies the given Pod Security Standards profile
+                  to every tenant namespace via the pod-security.kubernetes.io/enforce
+                  label. Unset means no PSS label is managed.
+                enum:
+                - privileged
+                - baseline
+                - restricted
+                type: string
+              priorityClass:
+                description: |-
+                  PriorityClass, when set, provisions a cluster-scoped PriorityClass named
+                  "kubtenant-<tenant>" for this tenant's workloads, and can optionally
+                  restrict tenant namespaces to it.
+                properties:
+                  description:
+                    description: Description is surfaced on the created PriorityClass.
+                    type: string
+                  restrict:
+                    description: |-
+                      Restrict, when true, installs a scoped ResourceQuota in every tenant
+                      namespace that forbids pods from using any OTHER explicit PriorityClass.
+                      Pods with no priorityClassName are unaffected.
+                    type: boolean
+                  value:
+                    description: |-
+                      Value is the scheduling priority assigned to the tenant's class. Kept
+                      below 1e9 so tenants can never outrank system-critical classes.
+                    format: int32
+                    maximum: 999999999
+                    minimum: 0
+                    type: integer
+                required:
+                - value
+                type: object
               resourceQuota:
                 description: |-
                   ResourceQuota, when set, is applied to every tenant namespace to cap

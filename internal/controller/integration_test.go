@@ -12,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	schedulingv1 "k8s.io/api/scheduling/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -24,6 +25,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	platformv1alpha1 "github.com/HariBoddapati01/kubtenant/api/v1alpha1"
+	platformv1beta1 "github.com/HariBoddapati01/kubtenant/api/v1beta1"
 )
 
 // TestIntegration runs the real controller against a real kube-apiserver
@@ -71,6 +73,7 @@ func TestIntegration(t *testing.T) {
 	t.Run("ProvisionsGuardrails", func(t *testing.T) { testProvision(t, ctx, c) })
 	t.Run("SelfHeals", func(t *testing.T) { testSelfHeal(t, ctx, c) })
 	t.Run("PrunesRemovedNamespaces", func(t *testing.T) { testPrune(t, ctx, c) })
+	t.Run("ServesBothAPIVersions", func(t *testing.T) { testCrossVersion(t, ctx, c) })
 }
 
 func newScheme(t *testing.T) *runtime.Scheme {
@@ -84,7 +87,13 @@ func newScheme(t *testing.T) *runtime.Scheme {
 	if err := rbacv1.AddToScheme(s); err != nil {
 		t.Fatal(err)
 	}
+	if err := platformv1beta1.AddToScheme(s); err != nil {
+		t.Fatal(err)
+	}
 	if err := platformv1alpha1.AddToScheme(s); err != nil {
+		t.Fatal(err)
+	}
+	if err := schedulingv1.AddToScheme(s); err != nil {
 		t.Fatal(err)
 	}
 	return s
@@ -103,25 +112,26 @@ func eventually(t *testing.T, what string, fn func() error) {
 	t.Fatalf("timed out waiting for %s: %v", what, last)
 }
 
-func fullTenant(name string) *platformv1alpha1.Tenant {
-	return &platformv1alpha1.Tenant{
+func fullTenant(name string) *platformv1beta1.Tenant {
+	return &platformv1beta1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: platformv1alpha1.TenantSpec{
+		Spec: platformv1beta1.TenantSpec{
 			DisplayName: "Integration Co",
 			Namespaces:  []string{name + "-dev", name + "-prod"},
-			Owners:      []platformv1alpha1.Subject{{Kind: "Group", Name: name + "-admins"}},
+			Owners:      []platformv1beta1.Subject{{Kind: "Group", Name: name + "-admins"}},
 			OwnerRole:   "edit",
 			PodSecurity: "restricted",
-			ResourceQuota: &platformv1alpha1.ResourceQuotaSpec{
+			ResourceQuota: &platformv1beta1.ResourceQuotaSpec{
 				CPU: "8", Memory: "16Gi", Pods: "40",
 			},
-			LimitRange: &platformv1alpha1.LimitRangeSpec{
+			LimitRange: &platformv1beta1.LimitRangeSpec{
 				DefaultCPU: "500m", DefaultMemory: "512Mi",
 				DefaultRequestCPU: "100m", DefaultRequestMemory: "128Mi",
 				MaxCPU: "4", MaxMemory: "8Gi",
 				MinPVCStorage: "1Gi", MaxPVCStorage: "100Gi",
 			},
 			NetworkIsolation: true,
+			PriorityClass:    &platformv1beta1.PriorityClassSpec{Value: 1000, Restrict: true},
 		},
 	}
 }
@@ -129,14 +139,14 @@ func fullTenant(name string) *platformv1alpha1.Tenant {
 func testCELValidation(t *testing.T, ctx context.Context, c client.Client) {
 	cases := []struct {
 		name   string
-		mutate func(*platformv1alpha1.Tenant)
+		mutate func(*platformv1beta1.Tenant)
 	}{
-		{"BadQuotaQuantity", func(tn *platformv1alpha1.Tenant) { tn.Spec.ResourceQuota.CPU = "lots" }},
-		{"KubePrefixedNamespace", func(tn *platformv1alpha1.Tenant) { tn.Spec.Namespaces = []string{"kube-sneaky"} }},
-		{"DefaultNamespace", func(tn *platformv1alpha1.Tenant) { tn.Spec.Namespaces = []string{"default"} }},
-		{"UppercaseNamespace", func(tn *platformv1alpha1.Tenant) { tn.Spec.Namespaces = []string{"NotADNSLabel"} }},
-		{"UnboundOwnerRole", func(tn *platformv1alpha1.Tenant) { tn.Spec.OwnerRole = "cluster-admin" }},
-		{"BadPVCQuantity", func(tn *platformv1alpha1.Tenant) { tn.Spec.LimitRange.MaxPVCStorage = "ten gigs" }},
+		{"BadQuotaQuantity", func(tn *platformv1beta1.Tenant) { tn.Spec.ResourceQuota.CPU = "lots" }},
+		{"KubePrefixedNamespace", func(tn *platformv1beta1.Tenant) { tn.Spec.Namespaces = []string{"kube-sneaky"} }},
+		{"DefaultNamespace", func(tn *platformv1beta1.Tenant) { tn.Spec.Namespaces = []string{"default"} }},
+		{"UppercaseNamespace", func(tn *platformv1beta1.Tenant) { tn.Spec.Namespaces = []string{"NotADNSLabel"} }},
+		{"UnboundOwnerRole", func(tn *platformv1beta1.Tenant) { tn.Spec.OwnerRole = "cluster-admin" }},
+		{"BadPVCQuantity", func(tn *platformv1beta1.Tenant) { tn.Spec.LimitRange.MaxPVCStorage = "ten gigs" }},
 	}
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -161,11 +171,11 @@ func testProvision(t *testing.T, ctx context.Context, c client.Client) {
 	}
 
 	eventually(t, "tenant Active", func() error {
-		var got platformv1alpha1.Tenant
+		var got platformv1beta1.Tenant
 		if err := c.Get(ctx, types.NamespacedName{Name: "acme"}, &got); err != nil {
 			return err
 		}
-		if got.Status.Phase != platformv1alpha1.TenantPhaseActive {
+		if got.Status.Phase != platformv1beta1.TenantPhaseActive {
 			return fmt.Errorf("phase=%s", got.Status.Phase)
 		}
 		return nil
@@ -210,6 +220,21 @@ func testProvision(t *testing.T, ctx context.Context, c client.Client) {
 		t.Fatalf("dns policy: %v", err)
 	}
 
+	var pc schedulingv1.PriorityClass
+	if err := c.Get(ctx, types.NamespacedName{Name: "kubtenant-acme"}, &pc); err != nil {
+		t.Fatalf("tenant priorityclass: %v", err)
+	}
+	if pc.Value != 1000 {
+		t.Errorf("priorityclass value = %d, want 1000", pc.Value)
+	}
+	var restrict corev1.ResourceQuota
+	if err := c.Get(ctx, types.NamespacedName{Name: "kubtenant-priority-restrict", Namespace: "acme-dev"}, &restrict); err != nil {
+		t.Fatalf("priority restrict quota: %v", err)
+	}
+	if restrict.Spec.ScopeSelector == nil || len(restrict.Spec.ScopeSelector.MatchExpressions) != 1 {
+		t.Errorf("restrict quota missing scope selector")
+	}
+
 	var rb rbacv1.RoleBinding
 	if err := c.Get(ctx, types.NamespacedName{Name: "kubtenant-owners", Namespace: "acme-prod"}, &rb); err != nil {
 		t.Fatalf("owners rolebinding: %v", err)
@@ -240,7 +265,7 @@ func testSelfHeal(t *testing.T, ctx context.Context, c client.Client) {
 }
 
 func testPrune(t *testing.T, ctx context.Context, c client.Client) {
-	var tn platformv1alpha1.Tenant
+	var tn platformv1beta1.Tenant
 	if err := c.Get(ctx, types.NamespacedName{Name: "acme"}, &tn); err != nil {
 		t.Fatalf("getting tenant: %v", err)
 	}
@@ -264,4 +289,41 @@ func testPrune(t *testing.T, ctx context.Context, c client.Client) {
 		}
 		return nil
 	})
+}
+
+// testCrossVersion proves the webhook-less graduation: schemas are identical,
+// conversion strategy is None, and the same stored object is readable and
+// writable through both served versions.
+func testCrossVersion(t *testing.T, ctx context.Context, c client.Client) {
+	alpha := &platformv1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "crossver"},
+		Spec: platformv1alpha1.TenantSpec{
+			Namespaces:  []string{"crossver-a"},
+			PodSecurity: "baseline",
+		},
+	}
+	if err := c.Create(ctx, alpha); err != nil {
+		t.Fatalf("creating via v1alpha1: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Delete(ctx, alpha) })
+
+	var beta platformv1beta1.Tenant
+	if err := c.Get(ctx, types.NamespacedName{Name: "crossver"}, &beta); err != nil {
+		t.Fatalf("reading via v1beta1: %v", err)
+	}
+	if beta.Spec.PodSecurity != "baseline" || len(beta.Spec.Namespaces) != 1 {
+		t.Errorf("v1beta1 view lost fields: %+v", beta.Spec)
+	}
+
+	beta.Spec.DisplayName = "written-via-beta"
+	if err := c.Update(ctx, &beta); err != nil {
+		t.Fatalf("updating via v1beta1: %v", err)
+	}
+	var again platformv1alpha1.Tenant
+	if err := c.Get(ctx, types.NamespacedName{Name: "crossver"}, &again); err != nil {
+		t.Fatalf("re-reading via v1alpha1: %v", err)
+	}
+	if again.Spec.DisplayName != "written-via-beta" {
+		t.Errorf("v1alpha1 view = %q, want written-via-beta", again.Spec.DisplayName)
+	}
 }

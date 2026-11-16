@@ -98,7 +98,7 @@ kubectl get resourcequota,limitrange,networkpolicy,rolebinding -n acme-prod
 ## The API
 
 ```yaml
-apiVersion: platform.hariboddapati.dev/v1alpha1
+apiVersion: platform.hariboddapati.dev/v1beta1
 kind: Tenant
 metadata:
   name: acme
@@ -123,6 +123,9 @@ spec:
     maxPVCStorage: 100Gi
   networkIsolation: true        # default-deny ingress+egress, allow same-tenant + DNS
   podSecurity: restricted       # PSS enforce label on every tenant namespace
+  priorityClass:                # tenant PriorityClass "kubtenant-acme"
+    value: 1000
+    restrict: true              # forbid other explicit priority classes
 ```
 
 Specs are validated at admission by CEL rules on the CRD — bad quantities,
@@ -167,8 +170,8 @@ KEEP=false make demo      # same, but tears the kind cluster down after (CI mode
 - [x] Egress `NetworkPolicy` (default-deny + allow-same-tenant + allow-DNS)
 - [x] `PodSecurity` admission labels (`spec.podSecurity`)
 - [x] CEL validation rules on the CRD (bad specs rejected at admission)
-- [ ] Namespace `PriorityClass` defaulting (needs its own design — not a native namespace concept)
-- [ ] Conversion webhook + `v1beta1` graduation (deferred until the API has survived real users; CEL covers validation without webhook infrastructure)
+- [x] Tenant `PriorityClass` (`spec.priorityClass`): provisioned per tenant, with optional quota-scoped restriction to it
+- [x] `v1beta1` graduation — storage version with identical schema, `v1alpha1` still served (deprecated); conversion strategy is `None`, so no webhook or cert infrastructure is needed until a schema-diverging change arrives
 
 ## License
 

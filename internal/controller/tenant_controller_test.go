@@ -19,7 +19,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	platformv1alpha1 "github.com/HariBoddapati01/kubtenant/api/v1alpha1"
+	platformv1beta1 "github.com/HariBoddapati01/kubtenant/api/v1beta1"
 )
 
 func testScheme(t *testing.T) *runtime.Scheme {
@@ -28,23 +28,23 @@ func testScheme(t *testing.T) *runtime.Scheme {
 	if err := clientgoscheme.AddToScheme(s); err != nil {
 		t.Fatalf("add clientgo scheme: %v", err)
 	}
-	if err := platformv1alpha1.AddToScheme(s); err != nil {
+	if err := platformv1beta1.AddToScheme(s); err != nil {
 		t.Fatalf("add platform scheme: %v", err)
 	}
 	return s
 }
 
-func newTenant() *platformv1alpha1.Tenant {
-	return &platformv1alpha1.Tenant{
+func newTenant() *platformv1beta1.Tenant {
+	return &platformv1beta1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "acme", Generation: 1},
-		Spec: platformv1alpha1.TenantSpec{
+		Spec: platformv1beta1.TenantSpec{
 			DisplayName:      "ACME Corp",
 			Namespaces:       []string{"acme-dev", "acme-prod"},
-			Owners:           []platformv1alpha1.Subject{{Kind: "Group", Name: "acme-admins"}},
+			Owners:           []platformv1beta1.Subject{{Kind: "Group", Name: "acme-admins"}},
 			OwnerRole:        "admin",
 			NetworkIsolation: true,
-			ResourceQuota:    &platformv1alpha1.ResourceQuotaSpec{CPU: "8", Memory: "16Gi", Pods: "50"},
-			LimitRange: &platformv1alpha1.LimitRangeSpec{
+			ResourceQuota:    &platformv1beta1.ResourceQuotaSpec{CPU: "8", Memory: "16Gi", Pods: "50"},
+			LimitRange: &platformv1beta1.LimitRangeSpec{
 				DefaultCPU: "500m", DefaultMemory: "512Mi",
 				DefaultRequestCPU: "100m", DefaultRequestMemory: "128Mi",
 			},
@@ -58,7 +58,7 @@ func reconcileOnce(t *testing.T, objs ...client.Object) (*TenantReconciler, clie
 	cl := fake.NewClientBuilder().
 		WithScheme(s).
 		WithObjects(objs...).
-		WithStatusSubresource(&platformv1alpha1.Tenant{}).
+		WithStatusSubresource(&platformv1beta1.Tenant{}).
 		Build()
 	r := &TenantReconciler{Client: cl, Scheme: s}
 	return r, cl
@@ -128,11 +128,11 @@ func TestReconcileProvisionsGuardrails(t *testing.T) {
 		}
 	}
 
-	var got platformv1alpha1.Tenant
+	var got platformv1beta1.Tenant
 	if err := cl.Get(ctx, types.NamespacedName{Name: "acme"}, &got); err != nil {
 		t.Fatalf("get tenant: %v", err)
 	}
-	if got.Status.Phase != platformv1alpha1.TenantPhaseActive {
+	if got.Status.Phase != platformv1beta1.TenantPhaseActive {
 		t.Errorf("phase = %q, want Active", got.Status.Phase)
 	}
 	if len(got.Status.Namespaces) != 2 {
@@ -186,7 +186,7 @@ func TestReconcilePrunesRemovedNamespaces(t *testing.T) {
 	}
 
 	// Drop acme-prod from the spec and reconcile again.
-	var current platformv1alpha1.Tenant
+	var current platformv1beta1.Tenant
 	if err := cl.Get(ctx, types.NamespacedName{Name: "acme"}, &current); err != nil {
 		t.Fatalf("get tenant: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestReconcilePrunesRemovedNamespaces(t *testing.T) {
 	}
 
 	// Status reflects only the remaining namespace.
-	var got platformv1alpha1.Tenant
+	var got platformv1beta1.Tenant
 	if err := cl.Get(ctx, types.NamespacedName{Name: "acme"}, &got); err != nil {
 		t.Fatalf("get tenant: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestReconcileMissingTenantIsNoOp(t *testing.T) {
 }
 
 func TestQuotaHardList(t *testing.T) {
-	hard, err := quotaHardList(&platformv1alpha1.ResourceQuotaSpec{CPU: "4", Memory: "8Gi", Pods: "20"})
+	hard, err := quotaHardList(&platformv1beta1.ResourceQuotaSpec{CPU: "4", Memory: "8Gi", Pods: "20"})
 	if err != nil {
 		t.Fatalf("quotaHardList: %v", err)
 	}
@@ -288,7 +288,7 @@ func TestQuotaHardList(t *testing.T) {
 		t.Errorf("pods = %s, want 20", q.String())
 	}
 
-	if _, err := quotaHardList(&platformv1alpha1.ResourceQuotaSpec{CPU: "not-a-quantity"}); err == nil {
+	if _, err := quotaHardList(&platformv1beta1.ResourceQuotaSpec{CPU: "not-a-quantity"}); err == nil {
 		t.Error("expected error for invalid quantity, got nil")
 	}
 }
