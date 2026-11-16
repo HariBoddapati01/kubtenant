@@ -35,6 +35,14 @@ vet: ## Run go vet.
 test: generate fmt vet ## Run unit tests.
 	go test ./... -race -coverprofile=cover.out
 
+ENVTEST_K8S_VERSION ?= 1.36.x
+SETUP_ENVTEST = go run sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.24
+
+.PHONY: test-integration
+test-integration: generate ## Run envtest integration tests against a real kube-apiserver.
+	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(PWD)/bin -p path)" \
+		go test ./internal/controller -tags=integration -run TestIntegration -v -timeout 10m
+
 .PHONY: lint
 lint: ## Run golangci-lint.
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...

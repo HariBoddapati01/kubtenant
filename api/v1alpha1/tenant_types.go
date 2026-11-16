@@ -22,8 +22,12 @@ type TenantSpec struct {
 
 	// Namespaces is the list of namespaces to provision for this tenant. Every
 	// namespace is labeled with the tenant name and owned by the Tenant object,
-	// so deleting the Tenant garbage-collects them.
+	// so deleting the Tenant garbage-collects them. Names must be DNS labels
+	// and may not collide with system namespaces.
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:items:MaxLength=63
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:XValidation:rule="self.all(ns, !ns.startsWith('kube-') && ns != 'default')",message="namespaces may not be 'default' or start with 'kube-'"
 	Namespaces []string `json:"namespaces"`
 
 	// Owners are the RBAC subjects (users and/or groups) that receive the
@@ -32,10 +36,12 @@ type TenantSpec struct {
 	Owners []Subject `json:"owners,omitempty"`
 
 	// OwnerRole is the ClusterRole that owners are bound to inside each tenant
-	// namespace. Defaults to the built-in "admin" ClusterRole, which is scoped
-	// to the namespace by the RoleBinding.
+	// namespace. Restricted to the built-in aggregate roles, which are the only
+	// ones the operator holds `bind` on — anything else would fail Kubernetes'
+	// RBAC escalation check at reconcile time.
 	// +optional
 	// +kubebuilder:default=admin
+	// +kubebuilder:validation:Enum=admin;edit;view
 	OwnerRole string `json:"ownerRole,omitempty"`
 
 	// ResourceQuota, when set, is applied to every tenant namespace to cap
@@ -48,11 +54,19 @@ type TenantSpec struct {
 	// +optional
 	LimitRange *LimitRangeSpec `json:"limitRange,omitempty"`
 
-	// NetworkIsolation, when true, installs a default-deny ingress NetworkPolicy
-	// plus an allow-same-tenant rule in each namespace, isolating tenant traffic.
+	// NetworkIsolation, when true, installs default-deny ingress AND egress
+	// NetworkPolicies in each namespace, plus allow-same-tenant rules in both
+	// directions and an egress allowance for DNS to kube-system.
 	// +optional
 	// +kubebuilder:default=true
 	NetworkIsolation bool `json:"networkIsolation,omitempty"`
+
+	// PodSecurity, when set, applies the given Pod Security Standards profile
+	// to every tenant namespace via the pod-security.kubernetes.io/enforce
+	// label. Unset means no PSS label is managed.
+	// +optional
+	// +kubebuilder:validation:Enum=privileged;baseline;restricted
+	PodSecurity string `json:"podSecurity,omitempty"`
 }
 
 // Subject identifies an RBAC subject to bind within tenant namespaces.
@@ -69,12 +83,15 @@ type Subject struct {
 type ResourceQuotaSpec struct {
 	// CPU is the aggregate limits.cpu allowed across the namespace (e.g. "8").
 	// +optional
+	// +kubebuilder:validation:XValidation:rule="isQuantity(self)",message="must be a valid resource quantity"
 	CPU string `json:"cpu,omitempty"`
 	// Memory is the aggregate limits.memory allowed across the namespace (e.g. "16Gi").
 	// +optional
+	// +kubebuilder:validation:XValidation:rule="isQuantity(self)",message="must be a valid resource quantity"
 	Memory string `json:"memory,omitempty"`
 	// Pods is the maximum number of pods allowed in the namespace.
 	// +optional
+	// +kubebuilder:validation:XValidation:rule="isQuantity(self)",message="must be a valid resource quantity"
 	Pods string `json:"pods,omitempty"`
 }
 
@@ -96,6 +113,26 @@ type LimitRangeSpec struct {
 	// +optional
 	// +kubebuilder:default="128Mi"
 	DefaultRequestMemory string `json:"defaultRequestMemory,omitempty"`
+	// MaxCPU, when set, is the maximum CPU limit any single container may
+	// request (e.g. "4").
+	// +optional
+	// +kubebuilder:validation:XValidation:rule="isQuantity(self)",message="must be a valid resource quantity"
+	MaxCPU string `json:"maxCPU,omitempty"`
+	// MaxMemory, when set, is the maximum memory limit any single container may
+	// request (e.g. "8Gi").
+	// +optional
+	// +kubebuilder:validation:XValidation:rule="isQuantity(self)",message="must be a valid resource quantity"
+	MaxMemory string `json:"maxMemory,omitempty"`
+	// MaxPVCStorage, when set, caps the storage request of any single
+	// PersistentVolumeClaim (e.g. "100Gi").
+	// +optional
+	// +kubebuilder:validation:XValidation:rule="isQuantity(self)",message="must be a valid resource quantity"
+	MaxPVCStorage string `json:"maxPVCStorage,omitempty"`
+	// MinPVCStorage, when set, is the minimum storage request of any single
+	// PersistentVolumeClaim (e.g. "1Gi").
+	// +optional
+	// +kubebuilder:validation:XValidation:rule="isQuantity(self)",message="must be a valid resource quantity"
+	MinPVCStorage string `json:"minPVCStorage,omitempty"`
 }
 
 // TenantPhase is a coarse, human-readable summary of reconciliation state.

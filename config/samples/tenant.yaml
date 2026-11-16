@@ -22,11 +22,18 @@ spec:
     cpu: "16"
     memory: 32Gi
     pods: "80"
-  # Default container requests/limits so unbounded pods can't starve the node.
+  # Default container requests/limits so unbounded pods can't starve the node,
+  # plus per-container maxima and PVC size bounds.
   limitRange:
     defaultCPU: 500m
     defaultMemory: 512Mi
     defaultRequestCPU: 100m
     defaultRequestMemory: 128Mi
-  # Install default-deny ingress + allow-same-tenant NetworkPolicies.
+    maxCPU: "4"
+    maxMemory: 8Gi
+    minPVCStorage: 1Gi
+    maxPVCStorage: 100Gi
+  # Default-deny ingress AND egress, allow-same-tenant both ways, allow DNS.
   networkIsolation: true
+  # Enforce the "restricted" Pod Security Standard in every tenant namespace.
+  podSecurity: restricted
