@@ -67,6 +67,29 @@ type TenantSpec struct {
 	// +optional
 	// +kubebuilder:validation:Enum=privileged;baseline;restricted
 	PodSecurity string `json:"podSecurity,omitempty"`
+
+	// PriorityClass, when set, provisions a cluster-scoped PriorityClass named
+	// "kubtenant-<tenant>" for this tenant's workloads, and can optionally
+	// restrict tenant namespaces to it.
+	// +optional
+	PriorityClass *PriorityClassSpec `json:"priorityClass,omitempty"`
+}
+
+// PriorityClassSpec configures the tenant's PriorityClass.
+type PriorityClassSpec struct {
+	// Value is the scheduling priority assigned to the tenant's class. Kept
+	// below 1e9 so tenants can never outrank system-critical classes.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=999999999
+	Value int32 `json:"value"`
+	// Description is surfaced on the created PriorityClass.
+	// +optional
+	Description string `json:"description,omitempty"`
+	// Restrict, when true, installs a scoped ResourceQuota in every tenant
+	// namespace that forbids pods from using any OTHER explicit PriorityClass.
+	// Pods with no priorityClassName are unaffected.
+	// +optional
+	Restrict bool `json:"restrict,omitempty"`
 }
 
 // Subject identifies an RBAC subject to bind within tenant namespaces.
@@ -173,6 +196,7 @@ var _ = corev1.ResourceCPU
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:deprecatedversion:warning="platform.hariboddapati.dev/v1alpha1 Tenant is deprecated; use v1beta1 (identical schema)"
 // +kubebuilder:resource:scope=Cluster,shortName=tn
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Namespaces",type=string,JSONPath=`.status.namespaces`

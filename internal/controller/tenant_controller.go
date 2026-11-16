@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	schedulingv1 "k8s.io/api/scheduling/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -20,7 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	platformv1alpha1 "github.com/HariBoddapati01/kubtenant/api/v1alpha1"
+	platformv1beta1 "github.com/HariBoddapati01/kubtenant/api/v1beta1"
 )
 
 const (
@@ -54,6 +55,7 @@ type TenantReconciler struct {
 // hold those permissions itself or hold `bind` on the referenced roles; the
 // narrow `bind` verb (scoped by resourceNames) is the least-privilege choice.
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=bind,resourceNames=admin;edit;view
+// +kubebuilder:rbac:groups=scheduling.k8s.io,resources=priorityclasses,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile drives the observed state of a Tenant toward its spec. It is
 // idempotent: every managed object is created-or-updated, so repeated calls
@@ -61,10 +63,16 @@ type TenantReconciler struct {
 func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	var tenant platformv1alpha1.Tenant
+	var tenant platformv1beta1.Tenant
 	if err := r.Get(ctx, req.NamespacedName, &tenant); err != nil {
 		// Not found: owned namespaces are garbage-collected via owner references.
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// Tenant-scoped PriorityClass is cluster-scoped and reconciled once, not
+	// per namespace.
+	if err := r.reconcilePriorityClass(ctx, &tenant); err != nil {
+		return r.fail(ctx, &tenant, fmt.Errorf("priorityclass: %w", err))
 	}
 
 	provisioned := make([]string, 0, len(tenant.Spec.Namespaces))
@@ -92,6 +100,11 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 				return r.fail(ctx, &tenant, fmt.Errorf("rbac in %q: %w", ns, err))
 			}
 		}
+		if tenant.Spec.PriorityClass != nil && tenant.Spec.PriorityClass.Restrict {
+			if err := r.reconcilePriorityRestriction(ctx, &tenant, ns); err != nil {
+				return r.fail(ctx, &tenant, fmt.Errorf("priority restriction in %q: %w", ns, err))
+			}
+		}
 		provisioned = append(provisioned, ns)
 	}
 
@@ -111,7 +124,7 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 // in the desired set. To avoid deleting namespaces the operator does not own, it
 // verifies the tenant-ownership label before issuing the delete. Deletion of an
 // already-absent namespace is treated as success.
-func (r *TenantReconciler) pruneNamespaces(ctx context.Context, t *platformv1alpha1.Tenant, desired []string) error {
+func (r *TenantReconciler) pruneNamespaces(ctx context.Context, t *platformv1beta1.Tenant, desired []string) error {
 	desiredSet := make(map[string]struct{}, len(desired))
 	for _, ns := range desired {
 		desiredSet[ns] = struct{}{}
@@ -151,7 +164,7 @@ func (r *TenantReconciler) pruneNamespaces(ctx context.Context, t *platformv1alp
 // tenant namespaces when spec.podSecurity is set.
 const labelPSSEnforce = "pod-security.kubernetes.io/enforce"
 
-func (r *TenantReconciler) reconcileNamespace(ctx context.Context, t *platformv1alpha1.Tenant, name string) error {
+func (r *TenantReconciler) reconcileNamespace(ctx context.Context, t *platformv1beta1.Tenant, name string) error {
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, ns, func() error {
 		applyLabels(&ns.ObjectMeta, t)
@@ -172,7 +185,7 @@ func (r *TenantReconciler) reconcileNamespace(ctx context.Context, t *platformv1
 	return err
 }
 
-func (r *TenantReconciler) reconcileResourceQuota(ctx context.Context, t *platformv1alpha1.Tenant, ns string) error {
+func (r *TenantReconciler) reconcileResourceQuota(ctx context.Context, t *platformv1beta1.Tenant, ns string) error {
 	hard, err := quotaHardList(t.Spec.ResourceQuota)
 	if err != nil {
 		return err
@@ -186,7 +199,7 @@ func (r *TenantReconciler) reconcileResourceQuota(ctx context.Context, t *platfo
 	return err
 }
 
-func (r *TenantReconciler) reconcileLimitRange(ctx context.Context, t *platformv1alpha1.Tenant, ns string) error {
+func (r *TenantReconciler) reconcileLimitRange(ctx context.Context, t *platformv1beta1.Tenant, ns string) error {
 	spec := t.Spec.LimitRange
 	def, err := parseResourceList(spec.DefaultCPU, spec.DefaultMemory)
 	if err != nil {
@@ -230,7 +243,7 @@ func (r *TenantReconciler) reconcileLimitRange(ctx context.Context, t *platformv
 
 // pvcStorageBounds translates the Min/MaxPVCStorage spec fields into
 // LimitRange resource lists; empty fields yield empty lists.
-func pvcStorageBounds(spec *platformv1alpha1.LimitRangeSpec) (lower, upper corev1.ResourceList, err error) {
+func pvcStorageBounds(spec *platformv1beta1.LimitRangeSpec) (lower, upper corev1.ResourceList, err error) {
 	lower, upper = corev1.ResourceList{}, corev1.ResourceList{}
 	if spec.MinPVCStorage != "" {
 		qty, err := resource.ParseQuantity(spec.MinPVCStorage)
@@ -249,7 +262,7 @@ func pvcStorageBounds(spec *platformv1alpha1.LimitRangeSpec) (lower, upper corev
 	return lower, upper, nil
 }
 
-func (r *TenantReconciler) reconcileNetworkPolicies(ctx context.Context, t *platformv1alpha1.Tenant, ns string) error {
+func (r *TenantReconciler) reconcileNetworkPolicies(ctx context.Context, t *platformv1beta1.Tenant, ns string) error {
 	sameTenant := []networkingv1.NetworkPolicyPeer{{
 		NamespaceSelector: &metav1.LabelSelector{
 			MatchLabels: map[string]string{LabelTenant: t.Name},
@@ -317,7 +330,7 @@ func (r *TenantReconciler) reconcileNetworkPolicies(ctx context.Context, t *plat
 	return err
 }
 
-func (r *TenantReconciler) reconcileOwnerRBAC(ctx context.Context, t *platformv1alpha1.Tenant, ns string) error {
+func (r *TenantReconciler) reconcileOwnerRBAC(ctx context.Context, t *platformv1beta1.Tenant, ns string) error {
 	role := t.Spec.OwnerRole
 	if role == "" {
 		role = "admin"
@@ -344,11 +357,75 @@ func (r *TenantReconciler) reconcileOwnerRBAC(ctx context.Context, t *platformv1
 	return err
 }
 
+// tenantPriorityClassName returns the cluster-scoped PriorityClass name
+// provisioned for a tenant.
+func tenantPriorityClassName(t *platformv1beta1.Tenant) string {
+	return managerName + "-" + t.Name
+}
+
+// reconcilePriorityClass creates/updates (or deletes, when unset) the
+// tenant's PriorityClass. Both objects are cluster-scoped, so ownership and
+// garbage collection work exactly like namespaces.
+func (r *TenantReconciler) reconcilePriorityClass(ctx context.Context, t *platformv1beta1.Tenant) error {
+	name := tenantPriorityClassName(t)
+	if t.Spec.PriorityClass == nil {
+		var pc schedulingv1.PriorityClass
+		err := r.Get(ctx, client.ObjectKey{Name: name}, &pc)
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		// Only delete a class this tenant owns.
+		if pc.Labels[LabelTenant] != t.Name {
+			return nil
+		}
+		return client.IgnoreNotFound(r.Delete(ctx, &pc))
+	}
+
+	preempt := corev1.PreemptLowerPriority
+	pc := &schedulingv1.PriorityClass{ObjectMeta: metav1.ObjectMeta{Name: name}}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, pc, func() error {
+		applyLabels(&pc.ObjectMeta, t)
+		pc.Value = t.Spec.PriorityClass.Value
+		pc.Description = t.Spec.PriorityClass.Description
+		pc.GlobalDefault = false
+		pc.PreemptionPolicy = &preempt
+		return controllerutil.SetControllerReference(t, pc, r.Scheme)
+	})
+	return err
+}
+
+// reconcilePriorityRestriction installs a scoped ResourceQuota that forbids
+// pods using any explicit PriorityClass other than the tenant's own: the
+// quota selects pods whose priorityClassName is NOT the tenant class and
+// allows zero of them. Pods without a priorityClassName are not selected by
+// the scope, so they remain unaffected.
+func (r *TenantReconciler) reconcilePriorityRestriction(ctx context.Context, t *platformv1beta1.Tenant, ns string) error {
+	rq := &corev1.ResourceQuota{ObjectMeta: metav1.ObjectMeta{Name: managerName + "-priority-restrict", Namespace: ns}}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, rq, func() error {
+		applyLabels(&rq.ObjectMeta, t)
+		rq.Spec = corev1.ResourceQuotaSpec{
+			Hard: corev1.ResourceList{corev1.ResourcePods: resource.MustParse("0")},
+			ScopeSelector: &corev1.ScopeSelector{
+				MatchExpressions: []corev1.ScopedResourceSelectorRequirement{{
+					ScopeName: corev1.ResourceQuotaScopePriorityClass,
+					Operator:  corev1.ScopeSelectorOpNotIn,
+					Values:    []string{tenantPriorityClassName(t)},
+				}},
+			},
+		}
+		return controllerutil.SetControllerReference(t, rq, r.Scheme)
+	})
+	return err
+}
+
 // --- status helpers ---
 
-func (r *TenantReconciler) succeed(ctx context.Context, t *platformv1alpha1.Tenant, namespaces []string) (ctrl.Result, error) {
+func (r *TenantReconciler) succeed(ctx context.Context, t *platformv1beta1.Tenant, namespaces []string) (ctrl.Result, error) {
 	t.Status.ObservedGeneration = t.Generation
-	t.Status.Phase = platformv1alpha1.TenantPhaseActive
+	t.Status.Phase = platformv1beta1.TenantPhaseActive
 	t.Status.Namespaces = namespaces
 	meta.SetStatusCondition(&t.Status.Conditions, metav1.Condition{
 		Type:               conditionReady,
@@ -362,9 +439,9 @@ func (r *TenantReconciler) succeed(ctx context.Context, t *platformv1alpha1.Tena
 	return ctrl.Result{}, r.Status().Update(ctx, t)
 }
 
-func (r *TenantReconciler) fail(ctx context.Context, t *platformv1alpha1.Tenant, cause error) (ctrl.Result, error) {
+func (r *TenantReconciler) fail(ctx context.Context, t *platformv1beta1.Tenant, cause error) (ctrl.Result, error) {
 	t.Status.ObservedGeneration = t.Generation
-	t.Status.Phase = platformv1alpha1.TenantPhaseError
+	t.Status.Phase = platformv1beta1.TenantPhaseError
 	meta.SetStatusCondition(&t.Status.Conditions, metav1.Condition{
 		Type:               conditionReady,
 		Status:             metav1.ConditionFalse,
@@ -383,19 +460,20 @@ func (r *TenantReconciler) fail(ctx context.Context, t *platformv1alpha1.Tenant,
 // SetupWithManager registers the controller and the resources it owns.
 func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&platformv1alpha1.Tenant{}).
+		For(&platformv1beta1.Tenant{}).
 		Owns(&corev1.Namespace{}).
 		Owns(&corev1.ResourceQuota{}).
 		Owns(&corev1.LimitRange{}).
 		Owns(&networkingv1.NetworkPolicy{}).
 		Owns(&rbacv1.RoleBinding{}).
+		Owns(&schedulingv1.PriorityClass{}).
 		Named(managerName).
 		Complete(r)
 }
 
 // --- pure helpers (unit-tested directly) ---
 
-func applyLabels(m *metav1.ObjectMeta, t *platformv1alpha1.Tenant) {
+func applyLabels(m *metav1.ObjectMeta, t *platformv1beta1.Tenant) {
 	if m.Labels == nil {
 		m.Labels = map[string]string{}
 	}
@@ -403,7 +481,7 @@ func applyLabels(m *metav1.ObjectMeta, t *platformv1alpha1.Tenant) {
 	m.Labels[LabelManagedBy] = managerName
 }
 
-func quotaHardList(q *platformv1alpha1.ResourceQuotaSpec) (corev1.ResourceList, error) {
+func quotaHardList(q *platformv1beta1.ResourceQuotaSpec) (corev1.ResourceList, error) {
 	hard := corev1.ResourceList{}
 	add := func(name corev1.ResourceName, val string) error {
 		if val == "" {
